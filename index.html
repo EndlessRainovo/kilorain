@@ -1444,6 +1444,109 @@ function receiveTransfer(id) {
   function renderMessages() {
     const area = document.getElementById('chat-area');
     const c = active();
+    if (!c || !c.messages) return; // 防止白屏报错的保护伞
+    
+    area.innerHTML = ''; 
+    let lastTime = 0;
+
+    c.messages.forEach(msg => {
+      // 时间分割线
+      if (msg.time && msg.time - lastTime > 5 * 60 * 1000) {
+        const timeDiv = document.createElement('div'); 
+        timeDiv.className = 'time-divider';
+        timeDiv.innerText = formatTime(msg.time); 
+        area.appendChild(timeDiv); 
+        lastTime = msg.time;
+      }
+
+      // 系统消息
+      if (msg.type === 'system' || msg.type === 'call_record') {
+        const sysDiv = document.createElement('div');
+        sysDiv.className = 'sys-msg';
+        sysDiv.innerText = msg.content;
+        area.appendChild(sysDiv);
+        return;
+      }
+
+      const div = document.createElement('div');
+      div.className = `msg ${msg.side === 'right' ? 'right' : 'left'}`;
+      div.dataset.id = msg.id; 
+
+      let bubbleHtml = '';
+      
+      if (msg.type === 'text') {
+         let quoteHtml = '';
+         if (msg.quote) {
+           quoteHtml = `<div class="quote-block"><span class="q-n">${msg.quote.name}</span>：${msg.quote.text}</div>`;
+         }
+         bubbleHtml = `<div class="bubble ${msg.quote ? 'has-quote' : ''}"><div class="b-text">${quoteHtml}${msg.content}</div></div>`;
+      } 
+      else if (msg.type === 'image') {
+          bubbleHtml = `<div class="bubble">< img src="${msg.content}" style="max-width:100%; border-radius:6px;"></div>`;
+      }
+      else if (msg.type === 'transfer') {
+          const isLeft = msg.side === 'left';
+          let bottomText = "转账";
+          let bottomStyle = "";
+          let bottomClick = "";
+          if (isLeft) {
+            if (msg.received) {
+              bottomText = "已收款";
+              bottomStyle = "color: rgba(255,255,255,0.5);"; 
+            } else {
+              bottomText = "点击收款";
+              bottomStyle = "color: #F09B51; background: #fff; font-weight: bold; cursor: pointer;";
+              bottomClick = `onclick="event.stopPropagation(); receiveTransfer(${msg.id})"`;
+            }
+          }
+          bubbleHtml = `<div class="bubble transfer-card" data-id="${msg.id}">
+            <div class="t-top">
+              <div class="t-icon-circle"><svg viewBox="0 0 24 24"><path d="M22 12l-4-4v3H3v2h15v3zM2 12l4 4v-3h15v-2H6V8z"/></svg></div>
+              <div class="t-content">
+                <div class="t-amount">¥ ${msg.content}</div>
+                <div class="t-desc">${msg.note || '转账'}</div>
+              </div>
+            </div>
+            <div class="t-bottom" style="${bottomStyle}" ${bottomClick}>${bottomText}</div>
+          </div>`;
+      }
+      else if (msg.type === 'gift') {
+         bubbleHtml = `<div class="bubble gift-card">
+           <div class="gift-top">
+             <span class="gift-icon-big">${msg.content}</span>
+             <div class="gift-info">
+               <div class="gift-title">${msg.side === 'right' ? '我送出的礼物' : '收到礼物'}</div>
+               ${msg.note ? `<div class="gift-note">${msg.note}</div>` : ''}
+             </div>
+           </div>
+           <div class="gift-bottom">礼物</div>
+         </div>`;
+      }
+      else if (msg.type === 'question') {
+         bubbleHtml = `<div class="bubble question-card" data-id="${msg.id}">
+           <div class="qc-label">选择题 · 请回答</div>
+           <div class="qc-text">${msg.content}</div>
+           <div class="qc-opts"><span class="qc-opt">是</span><span class="qc-opt">不是</span></div>
+         </div>`;
+      }
+      else {
+          bubbleHtml = `<div class="bubble">${msg.content}</div>`;
+      }
+
+      const avatarSrc = msg.side === 'right' ? db.userAvatar : c.avatar;
+      
+      // 注意这里使用的是反引号 ` 包裹
+      div.innerHTML = `
+        <div class="avatar-box">< img src="${avatarSrc}" class="avatar" data-pat="${msg.side}"><div class="msg-time">${formatShortTime(msg.time)}</div></div>
+        ${bubbleHtml}
+      `;
+      area.appendChild(div);
+    });
+    scrollToBottom();
+    if (typeof bindMessagePress === 'function') bindMessagePress(); // 重新绑定长按事件
+  } {
+    const area = document.getElementById('chat-area');
+    const c = active();
     area.innerHTML = ''; let lastTime = 0;
 
     c.messages.forEach(msg => {
