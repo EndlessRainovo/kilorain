@@ -1,10 +1,12 @@
+
+
+
 <!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>微信 · 韩系陪伴版</title>
-<script src="localforage.min.js"></script>
 <style>
   /* --- 基础与配色 --- */
   :root {
@@ -1026,11 +1028,52 @@
   // --- 默认数据 ---
   const DEFAULT_SIGN = '(⸝⸝>ᴗ(>ᴗ<⸝⸝）';
 
-  
-  
-  // 防止网页白屏的占位符
-  let db = {};
-  let isDataLoaded = false;
+  let db = JSON.parse(localStorage.getItem('ins_chat_db_v5')) || {
+    botName: "kilo",
+    botStatus: "在忙",
+    botAvatar: "https://image.uglycat.cc/7h47b3.jpg",
+    userAvatar: "https://image.uglycat.cc/925m6t.jpg",
+    bgImage: "",
+    replies: [],
+    messages: [],
+    emojis: [],
+    userSign: DEFAULT_SIGN
+  };
+
+  // --- 数据迁移 ---
+  if (!db.contacts) {
+    db.contacts = [{ id: 'c1', name: (db.botName && db.botName !== 'Rainne') ? db.botName : 'kilo', status: db.botStatus || '在忙', avatar: db.botAvatar, messages: db.messages || [] }];
+    db.activeContactId = 'c1';
+  }
+  // 旧版本内置默认名是 Rainne，这里统一纠正为 kilo
+  if (db.contacts[0] && db.contacts[0].name === 'Rainne') db.contacts[0].name = 'kilo';
+  if (db.botName === 'Rainne') db.botName = 'kilo';
+  db.replies = db.replies || [];
+  if (db.replies.length && typeof db.replies[0] === 'string') db.replies = db.replies.map(t => ({ text: t, cat: '默认' }));
+  db.cats = (db.cats && db.cats.length) ? db.cats : ['默认'];
+  if (!db.cats.includes('默认')) db.cats.unshift('默认');
+  db.questions = db.questions || [];
+  db.moments = db.moments || [];
+  db.moments.forEach(p => {
+    p.from = p.from || 'me';
+    p.likes = p.likes || [];
+    p.comments = (p.comments || []).map(cm => typeof cm === 'string' ? { from: 'bot', text: cm } : cm);
+    p.images = p.images || [];
+  });
+  db.emojis = db.emojis || [];
+  db.patText = (db.patText !== undefined && db.patText !== null) ? db.patText : '的小脑袋';
+  db.userName = db.userName || '我';
+  db.userId = db.userId || '';
+  db.userSign = (db.userSign && db.userSign.trim()) ? db.userSign : DEFAULT_SIGN;
+  if (typeof db.replyDelayMin !== 'number' || !isFinite(db.replyDelayMin) || db.replyDelayMin <= 0) db.replyDelayMin = 1.5;
+  if (typeof db.replyDelayMax !== 'number' || !isFinite(db.replyDelayMax) || db.replyDelayMax <= 0) db.replyDelayMax = 3;
+  if (db.replyDelayMax < db.replyDelayMin) db.replyDelayMax = db.replyDelayMin;
+  if (typeof db.proactiveMin !== 'number' || !isFinite(db.proactiveMin) || db.proactiveMin < 0) db.proactiveMin = 30;
+  db.nextProactiveAt = Number(db.nextProactiveAt) || 0;
+  db.momentCover = db.momentCover || '';
+  db.keepAlive = !!db.keepAlive;
+  db.nextBotMoment = db.nextBotMoment || Date.now() + 2 * 3600 * 1000;
+
   let isReplying = false;
   let longPressTimer = null;
   let activeMsgId = null;
@@ -1049,84 +1092,14 @@
   let wakeLock = null;
   let cardTarget = 'me';
   let pendingQuote = null;
-  let editingMsgId = null; // 记录正在编辑的消息ID
 
-  // 使用大容量本地数据库读取
-  localforage.getItem('ins_chat_db_v5').then(function(saved) {
-    if (saved) {
-      db = saved;
-    } else {
-      // 如果没有数据，初始化一套默认的
-      db = {
-        botName: "kilo", botStatus: "在忙",
-        botAvatar: "https://image.uglycat.cc/7h47b3.jpg",
-        userAvatar: "https://image.uglycat.cc/925m6t.jpg",
-        bgImage: "", replies: [], messages: [], emojis: [], userSign: DEFAULT_SIGN
-      };
-    }
-
-    // --- 下面是你原来的数据迁移和校验逻辑 ---
-    if (!db.contacts) {
-      db.contacts = [{ id: 'c1', name: (db.botName && db.botName !== 'Rainne') ? db.botName : 'kilo', status: db.botStatus || '在忙', avatar: db.botAvatar, messages: db.messages || [] }];
-      db.activeContactId = 'c1';
-    }
-    if (db.contacts[0] && db.contacts[0].name === 'Rainne') db.contacts[0].name = 'kilo';
-    if (db.botName === 'Rainne') db.botName = 'kilo';
-    db.replies = db.replies || [];
-    if (db.replies.length && typeof db.replies[0] === 'string') db.replies = db.replies.map(t => ({ text: t, cat: '默认' }));
-    db.cats = (db.cats && db.cats.length) ? db.cats : ['默认'];
-    if (!db.cats.includes('默认')) db.cats.unshift('默认');
-    db.questions = db.questions || [];
-    db.moments = db.moments || [];
-    db.moments.forEach(p => {
-      p.from = p.from || 'me'; p.likes = p.likes || [];
-      p.comments = (p.comments || []).map(cm => typeof cm === 'string' ? { from: 'bot', text: cm } : cm);
-      p.images = p.images || [];
-    });
-    db.emojis = db.emojis || [];
-    db.patText = (db.patText !== undefined && db.patText !== null) ? db.patText : '的小脑袋';
-    db.userName = db.userName || '我';
-    db.userId = db.userId || '';
-    db.userSign = (db.userSign && db.userSign.trim()) ? db.userSign : DEFAULT_SIGN;
-    if (typeof db.replyDelayMin !== 'number' || !isFinite(db.replyDelayMin) || db.replyDelayMin <= 0) db.replyDelayMin = 1.5;
-    if (typeof db.replyDelayMax !== 'number' || !isFinite(db.replyDelayMax) || db.replyDelayMax <= 0) db.replyDelayMax = 3;
-    if (db.replyDelayMax < db.replyDelayMin) db.replyDelayMax = db.replyDelayMin;
-    if (typeof db.proactiveMin !== 'number' || !isFinite(db.proactiveMin) || db.proactiveMin < 0) db.proactiveMin = 30;
-    db.nextProactiveAt = Number(db.nextProactiveAt) || 0;
-    db.momentCover = db.momentCover || '';
-    db.keepAlive = !!db.keepAlive;
-    db.nextBotMoment = db.nextBotMoment || Date.now() + 2 * 3600 * 1000;
-    
-    isDataLoaded = true;
-    // 数据全部加载完后，启动界面
-    if (typeof initUI === 'function') initUI();
-    if (typeof scheduleNextProactive === 'function') scheduleNextProactive();
-  });
-
-  // 修改保存数据的函数，存入大仓库
   function saveData() {
-    if (!isDataLoaded) return; // 还没加载完不让存
-    localforage.setItem('ins_chat_db_v5', db).catch(function(e) {
-      alert("存储空间不足，图片过大。");
-    });
+    try { localStorage.setItem('ins_chat_db_v5', JSON.stringify(db)); } catch (e) { alert("存储空间不足，图片过大。"); }
   }
 
-  function active() { 
-    if (!db || !db.contacts) return {}; 
-    return db.contacts.find(c => c.id === db.activeContactId) || db.contacts[0]; 
-  }
+  function active() { return db.contacts.find(c => c.id === db.activeContactId) || db.contacts[0]; }
   function botName() { return db.contacts[0] ? db.contacts[0].name : '对方'; }
-function receiveTransfer(id) {
-    const msgs = active().messages;
-    const msg = msgs.find(m => m.id === id);
-    if (msg && !msg.received) {
-      msg.received = true;
-      saveData();
-      renderMessages(); // 刷新界面
-      // 接收后，加一条灰色的系统提示
-      addMessageToDB('left', '已收款', 'system'); 
-    }
-  }
+
   // --- 视图切换 ---
   function showView(v) {
     document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
@@ -1345,39 +1318,14 @@ function receiveTransfer(id) {
 
   function handleEnter(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
 
-  
   function sendMessage() {
     if (isVoiceMode) return;
     const input = document.getElementById('chat-input');
     const text = input.value.trim();
     if (!text) return;
-
-    // 如果是在编辑状态
-    if (editingMsgId) {
-      const msg = active().messages.find(m => m.id === editingMsgId);
-      if (msg) {
-        msg.content = text; // 覆盖原来的文字
-        msg.edited = true;  // 加个已编辑的标记（可选）
-      }
-      editingMsgId = null; // 退出编辑状态
-      input.placeholder = ''; // 恢复默认提示
-    } else {
-      // 如果是正常发消息
-      addMessageToDB('right', text, 'text');
-    }
-
-    // 清空输入框并重置状态
-    input.value = ''; 
-    input.style.height = '22px'; 
-    checkSendButtonState();
-    
-    saveData();
-    renderMessages();
-    renderHome();
-
-    if (!isReplying && !editingMsgId) {
-      triggerBotReply();
-    }
+    addMessageToDB('right', text, 'text');
+    input.value = ''; input.style.height = '22px'; checkSendButtonState();
+    if (!isReplying) triggerBotReply();
   }
 
   function addMessageToDB(side, content, type, extra = {}) {
@@ -1419,21 +1367,19 @@ function receiveTransfer(id) {
     const area = document.getElementById('chat-area');
     const div = document.createElement('div');
     div.className = 'msg left'; div.id = typingId;
-    div.innerHTML = `<div class="avatar-box">< img src="${active().avatar}" class="avatar"></div><div class="typing"><span></span><span></span><span></span></div>`;
+    div.innerHTML = `<div class="avatar-box"><img src="${active().avatar}" class="avatar"></div><div class="typing"><span></span><span></span><span></span></div>`;
     area.appendChild(div); scrollToBottom();
 
     const delay = replyDelayMs();
     setTimeout(() => {
       document.getElementById(typingId)?.remove();
       const rand = Math.random();
-      
-      // 去掉了原本的发语音逻辑
-      if (rand < 0.15) {
-        // 金额变成 1~200 随机，留言也变成随机挑选
-        const amount = (Math.random() * 200 + 1).toFixed(2);
-        const notes = ["给你买杯奶茶", "拿去买好吃的", "一点小小心意", "请你喝咖啡", "买个小蛋糕吧"];
-        const randomNote = notes[Math.floor(Math.random() * notes.length)];
-        addMessageToDB('left', amount, 'transfer', { note: randomNote });
+      if (rand < 0.1) {
+        const sec = Math.floor(Math.random() * 5) + 2;
+        addMessageToDB('left', sec, 'voice');
+      } else if (rand < 0.2) {
+        const amount = (Math.random() * 50 + 1).toFixed(2);
+        addMessageToDB('left', amount, 'transfer', { note: "给你买杯奶茶" });
       } else {
         addMessageToDB('left', randomReply(), 'text');
       }
@@ -1442,109 +1388,6 @@ function receiveTransfer(id) {
   }
 
   function renderMessages() {
-    const area = document.getElementById('chat-area');
-    const c = active();
-    if (!c || !c.messages) return; // 防止白屏报错的保护伞
-    
-    area.innerHTML = ''; 
-    let lastTime = 0;
-
-    c.messages.forEach(msg => {
-      // 时间分割线
-      if (msg.time && msg.time - lastTime > 5 * 60 * 1000) {
-        const timeDiv = document.createElement('div'); 
-        timeDiv.className = 'time-divider';
-        timeDiv.innerText = formatTime(msg.time); 
-        area.appendChild(timeDiv); 
-        lastTime = msg.time;
-      }
-
-      // 系统消息
-      if (msg.type === 'system' || msg.type === 'call_record') {
-        const sysDiv = document.createElement('div');
-        sysDiv.className = 'sys-msg';
-        sysDiv.innerText = msg.content;
-        area.appendChild(sysDiv);
-        return;
-      }
-
-      const div = document.createElement('div');
-      div.className = `msg ${msg.side === 'right' ? 'right' : 'left'}`;
-      div.dataset.id = msg.id; 
-
-      let bubbleHtml = '';
-      
-      if (msg.type === 'text') {
-         let quoteHtml = '';
-         if (msg.quote) {
-           quoteHtml = `<div class="quote-block"><span class="q-n">${msg.quote.name}</span>：${msg.quote.text}</div>`;
-         }
-         bubbleHtml = `<div class="bubble ${msg.quote ? 'has-quote' : ''}"><div class="b-text">${quoteHtml}${msg.content}</div></div>`;
-      } 
-      else if (msg.type === 'image') {
-          bubbleHtml = `<div class="bubble">< img src="${msg.content}" style="max-width:100%; border-radius:6px;"></div>`;
-      }
-      else if (msg.type === 'transfer') {
-          const isLeft = msg.side === 'left';
-          let bottomText = "转账";
-          let bottomStyle = "";
-          let bottomClick = "";
-          if (isLeft) {
-            if (msg.received) {
-              bottomText = "已收款";
-              bottomStyle = "color: rgba(255,255,255,0.5);"; 
-            } else {
-              bottomText = "点击收款";
-              bottomStyle = "color: #F09B51; background: #fff; font-weight: bold; cursor: pointer;";
-              bottomClick = `onclick="event.stopPropagation(); receiveTransfer(${msg.id})"`;
-            }
-          }
-          bubbleHtml = `<div class="bubble transfer-card" data-id="${msg.id}">
-            <div class="t-top">
-              <div class="t-icon-circle"><svg viewBox="0 0 24 24"><path d="M22 12l-4-4v3H3v2h15v3zM2 12l4 4v-3h15v-2H6V8z"/></svg></div>
-              <div class="t-content">
-                <div class="t-amount">¥ ${msg.content}</div>
-                <div class="t-desc">${msg.note || '转账'}</div>
-              </div>
-            </div>
-            <div class="t-bottom" style="${bottomStyle}" ${bottomClick}>${bottomText}</div>
-          </div>`;
-      }
-      else if (msg.type === 'gift') {
-         bubbleHtml = `<div class="bubble gift-card">
-           <div class="gift-top">
-             <span class="gift-icon-big">${msg.content}</span>
-             <div class="gift-info">
-               <div class="gift-title">${msg.side === 'right' ? '我送出的礼物' : '收到礼物'}</div>
-               ${msg.note ? `<div class="gift-note">${msg.note}</div>` : ''}
-             </div>
-           </div>
-           <div class="gift-bottom">礼物</div>
-         </div>`;
-      }
-      else if (msg.type === 'question') {
-         bubbleHtml = `<div class="bubble question-card" data-id="${msg.id}">
-           <div class="qc-label">选择题 · 请回答</div>
-           <div class="qc-text">${msg.content}</div>
-           <div class="qc-opts"><span class="qc-opt">是</span><span class="qc-opt">不是</span></div>
-         </div>`;
-      }
-      else {
-          bubbleHtml = `<div class="bubble">${msg.content}</div>`;
-      }
-
-      const avatarSrc = msg.side === 'right' ? db.userAvatar : c.avatar;
-      
-      // 注意这里使用的是反引号 ` 包裹
-      div.innerHTML = `
-        <div class="avatar-box">< img src="${avatarSrc}" class="avatar" data-pat="${msg.side}"><div class="msg-time">${formatShortTime(msg.time)}</div></div>
-        ${bubbleHtml}
-      `;
-      area.appendChild(div);
-    });
-    scrollToBottom();
-    if (typeof bindMessagePress === 'function') bindMessagePress(); // 重新绑定长按事件
-  } {
     const area = document.getElementById('chat-area');
     const c = active();
     area.innerHTML = ''; let lastTime = 0;
@@ -1585,38 +1428,20 @@ function receiveTransfer(id) {
                               ${msg.note ? `<div class="gift-note">${msg.note}</div>` : ''}
                             </div>
                           </div>
-<div class="gift-bottom">礼物</div>
+                          <div class="gift-bottom">礼物</div>
                         </div>`;
         } else if (msg.type === 'transfer') {
-        const isLeft = msg.side === 'left'; // 判断是不是对方发来的转账
-        let bottomText = "转账";
-        let bottomStyle = "";
-        let bottomClick = "";
-
-        // 如果是对方发来的，且还没收钱，就显示点击收款
-        if (isLeft) {
-          if (msg.received) {
-            bottomText = "已收款";
-            bottomStyle = "color: rgba(255,255,255,0.5);"; 
-          } else {
-            bottomText = "点击收款";
-            bottomStyle = "color: #F09B51; background: #fff; font-weight: bold; cursor: pointer;";
-            // 这里加了 event.stopPropagation() 是防止点收款的时候，误触发了长按菜单
-            bottomClick = `onclick="event.stopPropagation(); receiveTransfer(${msg.id})"`;
-          }
-        }
-
-        bubbleHtml = `<div class="bubble transfer-card" data-id="${msg.id}">
-          <div class="t-top">
-            <div class="t-icon-circle"><svg viewBox="0 0 24 24"><path d="M22 12l-4-4v3H3v2h15v3zM2 12l4 4v-3h15v-2H6V8z"/></svg></div>
-            <div class="t-content">
-              <div class="t-amount">¥ ${msg.content}</div>
-              <div class="t-desc">${msg.note || '转账'}</div>
-            </div>
-          </div>
-          <div class="t-bottom" style="${bottomStyle}" ${bottomClick}>${bottomText}</div>
-        </div>`;
-      } else if (msg.type === 'question') {   // <--- 注意这里，前面只留一个 } 
+          bubbleHtml = `<div class="bubble transfer-card" data-id="${msg.id}">
+                          <div class="t-top">
+                            <div class="t-icon-circle"><svg viewBox="0 0 24 24"><path d="M22 12l-4-4v3H3v2h15v3zM2 12l4 4v-3h15v-2H6V8z"/></svg></div>
+                            <div class="t-content">
+                              <div class="t-amount">¥ ${msg.content}</div>
+                              <div class="t-desc">${msg.note || '你发起了一笔转账'}</div>
+                            </div>
+                          </div>
+                          <div class="t-bottom">转账</div>
+                        </div>`;
+        } else if (msg.type === 'question') {
           bubbleHtml = `<div class="bubble question-card" data-id="${msg.id}">
                           <div class="qc-label">选择题 · 请回答</div>
                           <div class="qc-text">${msg.content}</div>
@@ -1625,7 +1450,7 @@ function receiveTransfer(id) {
         }
 
         div.innerHTML = `
-          <div class="avatar-box">< img src="${avatarSrc}" class="avatar" data-pat="${msg.side}"><div class="msg-time">${formatShortTime(msg.time)}</div></div>
+          <div class="avatar-box"><img src="${avatarSrc}" class="avatar" data-pat="${msg.side}"><div class="msg-time">${formatShortTime(msg.time)}</div></div>
           ${bubbleHtml}
         `;
         area.appendChild(div);
@@ -1789,50 +1614,18 @@ function receiveTransfer(id) {
   function handleMenuAction(action) {
     if (!activeMsgId) return;
     const msgs = active().messages;
-    const msgIndex = msgs.findIndex(m => m.id === activeMsgId);
-    if (msgIndex === -1) return;
-    const msg = msgs[msgIndex];
-
+    const msgIndex = msgs.findIndex(m => m.id === activeMsgId); if (msgIndex === -1) return;
     if (action === 'quote') {
-      setQuoteFromMsg(msg);
-      hideActionMenu(); 
-      activeMsgId = null; 
-      return;
+      setQuoteFromMsg(msgs[msgIndex]);
+      hideActionMenu(); activeMsgId = null; return;
     }
-    
     if (action === 'edit') {
-      if (msg.type !== 'text') { alert('只能编辑文字消息哦'); hideActionMenu(); activeMsgId = null; return; }
-      
-      if (isVoiceMode) toggleVoiceMode();
-      
-      const input = document.getElementById('chat-input');
-      input.value = msg.content;
-      editingMsgId = msg.id; 
-      
-      document.getElementById('btn-send').style.display = 'block';
-      document.getElementById('btn-plus').style.display = 'none';
-      
-      setTimeout(() => {
-        input.focus();
-        input.setSelectionRange(input.value.length, input.value.length);
-      }, 100);
-      
-      input.placeholder = '正在编辑消息...';
-      
-    } else if (action === 'delete') {
-      if (confirm('确定删除这条消息吗？')) {
-        msgs.splice(msgIndex, 1);
-      }
-    } else if (action === 'revoke') {
-      msgs.splice(msgIndex, 1);
-    }
-
-    saveData(); 
-    renderMessages(); 
-    renderHome(); 
-    hideActionMenu(); 
-    activeMsgId = null;
-  } // 👈 到这里就彻底结束了
+      const newText = prompt("编辑消息内容：", msgs[msgIndex].content);
+      if (newText !== null && newText.trim() !== '') msgs[msgIndex].content = newText.trim();
+    } else if (action === 'delete') { msgs.splice(msgIndex, 1); }
+    else if (action === 'revoke') { msgs[msgIndex] = { id: Date.now(), type: 'system', content: '你撤回了一条消息', time: Date.now() }; }
+    saveData(); renderMessages(); renderHome(); hideActionMenu(); activeMsgId = null;
+  }
 
   function scrollToBottom() { const area = document.getElementById('chat-area'); area.scrollTop = area.scrollHeight; }
 
@@ -2303,55 +2096,18 @@ function receiveTransfer(id) {
   }
   function updateBotStatus() { const c = active(); c.status = document.getElementById('set-bot-status').value.trim() || "在线"; document.getElementById('ui-nav-status').innerText = c.status; saveData(); }
 
-  // 1. 自动压缩图片的函数 (新增)
-  function compressImage(file, callback) {
-    const reader = new FileReader();
-    reader.onload = function(ev) {
-      const img = new Image();
-      img.onload = function() {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        const maxSize = 800; // 限制最大边长为 800 像素
-
-        if (width > height && width > maxSize) {
-          height *= maxSize / width;
-          width = maxSize;
-        } else if (height > maxSize) {
-          width *= maxSize / height;
-          height = maxSize;
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        // 压缩质量为 0.7
-        callback(canvas.toDataURL('image/jpeg', 0.7)); 
-      }
-      img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-  }
-
-  // 2. 替换后的上传函数
   function uploadImg(event, type) {
     const file = event.target.files[0]; if (!file) return;
-    
-    // 调用上面的压缩函数
-    compressImage(file, function(base64) {
-      if (type === 'bgImage') { 
-        db.bgImage = base64; 
-        document.getElementById('chat-area').style.backgroundImage = `url(${base64})`; 
-      }
-      else if (type === 'momentCover') { db.momentCover = base64; }
-      else if (type === 'botAvatar') { const c = active(); c.avatar = base64; }
-      else if (type === 'userAvatar') { db.userAvatar = base64; }
-      
-      saveData(); 
-      if (typeof renderMessages === 'function') renderMessages(); 
-      if (typeof renderHome === 'function') renderHome(); 
-    });
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const base64 = e.target.result;
+      if (type === 'bgImage') { db.bgImage = base64; document.getElementById('chat-area').style.backgroundImage = `url(${base64})`; }
+      else if (type === 'momentCover') { db.momentCover = base64; renderMoments(); }
+      else if (type === 'botAvatar') { const c = active(); c.avatar = base64; document.getElementById('call-avatar').src = base64; document.getElementById('mini-avatar').src = base64; document.getElementById('t-to-avatar').src = base64; }
+      else if (type === 'userAvatar') { db.userAvatar = base64; renderMoments(); renderMe(); }
+      saveData(); renderMessages(); renderHome();
+    };
+    reader.readAsDataURL(file);
   }
 
   function clearChat() { if (confirm("确定要清空当前聊天记录吗？（词库不会丢）")) { active().messages = []; saveData(); renderMessages(); renderHome(); } }
@@ -2606,8 +2362,8 @@ function receiveTransfer(id) {
     if (confirm('确定清空全部数据吗？此操作不可恢复！')) { localStorage.removeItem('ins_chat_db_v5'); location.reload(); }
   }
 
-  // initUI();
-  // showView('home');
+  initUI();
+  showView('home');
 </script>
 </body>
 </html>
